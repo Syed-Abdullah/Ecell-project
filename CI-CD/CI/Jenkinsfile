@@ -49,7 +49,7 @@ pipeline {
                     passwordVariable: 'DOCKER_PASS'
                 )]) {
                     sh '''
-                        BUILD_TAG=$(echo $BUILD_NUMBER)
+                        BUILD_TAG=$(echo $GIT_COMMIT | cut -c1-7)
 
                         docker build -t $DOCKER_USER/ecell-frontend:$BUILD_TAG -t $DOCKER_USER/ecell-frontend:latest ./frontend
                         docker build -t $DOCKER_USER/ecell-backend:$BUILD_TAG  -t $DOCKER_USER/ecell-backend:latest  ./backend
