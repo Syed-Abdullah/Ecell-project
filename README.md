@@ -43,3 +43,6 @@ docker compose up --build
   - System Diagnostics & Thermal Tuning
   - Low-Level Disk Formatting & Partitioning
 - **Database Auto-Seeding**: PostgreSQL database automatically initializes tables and seeds inventory items on first start.
+
+
+This is a new readme line
