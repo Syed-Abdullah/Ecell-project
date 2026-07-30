@@ -1,0 +1,82 @@
+pipeline {
+    agent any
+
+    options {
+        buildDiscarder(logRotator(numToKeepStr: '10'))
+        disableConcurrentBuilds()
+        timeout(time: 30, unit: 'MINUTES')
+        timestamps()
+    }
+
+    stages {
+        stage('Checkout Code') {
+            steps {
+                git branch: 'main', url: 'https://github.com/Syed-Abdullah/Ecell-project.git'
+            }
+        }
+
+        stage('Validate Docker Compose') {
+            steps {
+                sh 'docker compose config || docker-compose config'
+            }
+        }
+
+        stage('Backend Validation') {
+            steps {
+                dir('backend') {
+                    sh 'npm ci || npm install'
+                    sh 'node --check server.js'
+                    sh 'node --check db.js'
+                    sh 'node --check init-db.js'
+                }
+            }
+        }
+
+        stage('Frontend Build Validation') {
+            steps {
+                dir('frontend') {
+                    sh 'npm ci || npm install'
+                    sh 'npm run build'
+                }
+            }
+        }
+
+        stage('Build & Push Docker Images') {
+            steps {
+                withCredentials([usernamePassword(
+                    credentialsId: 'dockerhub-credentials',
+                    usernameVariable: 'DOCKER_USER',
+                    passwordVariable: 'DOCKER_PASS'
+                )]) {
+                    sh '''
+                        BUILD_TAG=$(echo $BUILD_NUMBER)
+
+                        docker build -t $DOCKER_USER/ecell-frontend:$BUILD_TAG -t $DOCKER_USER/ecell-frontend:latest ./frontend
+                        docker build -t $DOCKER_USER/ecell-backend:$BUILD_TAG  -t $DOCKER_USER/ecell-backend:latest  ./backend
+
+                        docker login -u "$DOCKER_USER" -p "$DOCKER_PASS"
+
+                        docker push $DOCKER_USER/ecell-frontend:$BUILD_TAG
+                        docker push $DOCKER_USER/ecell-frontend:latest
+                        docker push $DOCKER_USER/ecell-backend:$BUILD_TAG
+                        docker push $DOCKER_USER/ecell-backend:latest
+
+                        docker logout
+                    '''
+                }
+            }
+        }
+    }
+
+    post {
+        always {
+            sh 'docker image prune -f || true'
+        }
+        success {
+            echo '✅ Pipeline done! Images pushed to Docker Hub.'
+        }
+        failure {
+            echo '❌ Pipeline failed. Check build logs.'
+        }
+    }
+}
