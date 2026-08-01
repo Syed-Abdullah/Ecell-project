@@ -1,0 +1,106 @@
+pipeline {
+    agent any
+
+    environment {
+        // Ensure standard binary directories are included in shell PATH
+        PATH               = "/usr/local/bin:/usr/bin:/bin:${env.PATH}"
+
+        // CD Deployment Repository Details
+        DEPLOY_REPO_URL    = 'https://github.com/Syed-Abdullah/Ecell-deploy.git'
+        DEPLOY_BRANCH      = 'main'
+
+        // Jenkins Credential ID for the Secret File containing Kubeconfig
+        KUBECONFIG_CRED_ID = 'k8s-kubeconfig'
+    }
+
+    options {
+        buildDiscarder(logRotator(numToKeepStr: '10'))
+        disableConcurrentBuilds()
+        timeout(time: 20, unit: 'MINUTES')
+        timestamps()
+    }
+
+    stages {
+        stage('Checkout Deploy Repository') {
+            steps {
+                echo "📦 Cloning Deployment Manifests Repo: ${DEPLOY_REPO_URL} (${DEPLOY_BRANCH})..."
+                git branch: "${DEPLOY_BRANCH}", url: "${DEPLOY_REPO_URL}"
+            }
+        }
+
+        stage('Verify Kubeconfig & Cluster Connectivity') {
+            steps {
+                withCredentials([file(credentialsId: "${KUBECONFIG_CRED_ID}", variable: 'KUBECONFIG')]) {
+                    echo "🔍 Testing Kubernetes connection using Jenkins Secret File..."
+                    sh '''
+                        echo "✅ Kubeconfig loaded dynamically from Jenkins Credentials"
+                        kubectl cluster-info
+                        kubectl get nodes
+                    '''
+                }
+            }
+        }
+
+        stage('Deploy to Kubernetes Cluster') {
+            steps {
+                withCredentials([file(credentialsId: "${KUBECONFIG_CRED_ID}", variable: 'KUBECONFIG')]) {
+                    echo "🚀 Applying Kubernetes Manifests..."
+                    sh '''
+                        if [ -d "k8s" ] && [ -f "k8s/kustomization.yaml" ]; then
+                            echo "Applying k8s/ directory via Kustomize..."
+                            kubectl apply -k k8s/
+                        elif [ -d "k8s" ]; then
+                            echo "Applying k8s/ directory..."
+                            kubectl apply -f k8s/
+                        elif [ -f "kustomization.yaml" ]; then
+                            echo "Applying root directory via Kustomize..."
+                            kubectl apply -k .
+                        elif [ -f "ecell-deploy.yaml" ]; then
+                            echo "Applying ecell-deploy.yaml..."
+                            kubectl apply -f ecell-deploy.yaml
+                        else
+                            echo "Applying individual manifest files..."
+                            kubectl apply -f 00-namespace.yaml -f 01-secret.yaml -f 02-db.yaml -f 03-backend.yaml -f 04-frontend.yaml
+                        fi
+                    '''
+                }
+            }
+        }
+
+        stage('Verify Deployment Rollout') {
+            steps {
+                withCredentials([file(credentialsId: "${KUBECONFIG_CRED_ID}", variable: 'KUBECONFIG')]) {
+                    echo "⏳ Waiting for Rollout to complete..."
+                    sh '''
+                        echo "Checking PostgreSQL Rollout..."
+                        kubectl rollout status deployment/ecell-db -n ecell --timeout=120s || true
+
+                        echo "Checking Backend Rollout..."
+                        kubectl rollout status deployment/ecell-backend -n ecell --timeout=120s
+
+                        echo "Checking Frontend Rollout..."
+                        kubectl rollout status deployment/ecell-frontend -n ecell --timeout=120s
+                    '''
+                }
+            }
+        }
+
+        stage('Deployment Status Summary') {
+            steps {
+                withCredentials([file(credentialsId: "${KUBECONFIG_CRED_ID}", variable: 'KUBECONFIG')]) {
+                    echo "📊 Current Resources in 'ecell' Namespace:"
+                    sh 'kubectl get all,pvc,secret -n ecell'
+                }
+            }
+        }
+    }
+
+    post {
+        success {
+            echo "🎉 Continuous Deployment to Kubernetes Succeeded!"
+        }
+        failure {
+            echo "❌ Continuous Deployment Failed. Check build logs."
+        }
+    }
+}
